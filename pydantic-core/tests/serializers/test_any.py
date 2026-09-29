@@ -11,6 +11,7 @@ from enum import Enum
 from math import inf, isinf, isnan, nan
 from pathlib import Path
 from typing import ClassVar
+from unittest.mock import call
 
 import pytest
 from dirty_equals import HasRepr, IsList
@@ -334,6 +335,33 @@ def test_unknown_type_fallback(any_serializer: SchemaSerializer):
     assert any_serializer.to_python(f, mode='json', fallback=fallback_func) == 'fallback:<Foobar repr>'
     assert any_serializer.to_python(f, fallback=fallback_func) == 'fallback:<Foobar repr>'
     assert any_serializer.to_json(f, fallback=fallback_func) == b'"fallback:<Foobar repr>"'
+
+
+def test_invalid_pydantic_serializer_uses_fallback(any_serializer: SchemaSerializer):
+    """Objects like `mock.call` have a `__pydantic_serializer__` attribute which is not a `SchemaSerializer`.
+
+    https://github.com/pydantic/pydantic/issues/13734
+    """
+
+    class BogusSerializer:
+        __pydantic_serializer__ = 'not a serializer'
+
+        def __repr__(self):
+            return '<BogusSerializer>'
+
+    b = BogusSerializer()
+    assert any_serializer.to_python(b) is b
+    assert any_serializer.to_python(b, mode='json', fallback=repr) == '<BogusSerializer>'
+    assert any_serializer.to_python(b, fallback=repr) == '<BogusSerializer>'
+    assert any_serializer.to_json(b, fallback=repr) == b'"<BogusSerializer>"'
+    assert to_json(b, serialize_unknown=True) == b'"<BogusSerializer>"'
+    with pytest.raises(
+        PydanticSerializationError, match="Unable to serialize unknown type: <class '.+BogusSerializer'>"
+    ):
+        any_serializer.to_json(b)
+
+    assert to_jsonable_python(call(1, 2, 3), fallback=lambda c: c.args) == [1, 2, 3]
+    assert to_json(call(1, 2, 3), fallback=lambda c: c.args) == b'[1,2,3]'
 
 
 def test_fallback_cycle_same(any_serializer: SchemaSerializer):

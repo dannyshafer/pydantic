@@ -54,6 +54,7 @@ pub(crate) fn infer_to_python_known<'py>(
     state: &mut SerializationState<'py>,
 ) -> PyResult<Py<PyAny>> {
     let py = value.py();
+    let ob_type = check_pydantic_serializable(ob_type, value);
 
     let is_json = matches!(state.extra.mode, SerMode::Json);
     let mut guard = match state.recursion_guard(value, INFER_DEF_REF_ID) {
@@ -338,6 +339,7 @@ pub(crate) fn infer_serialize_known<'py, S: Serializer>(
     serializer: S,
     state: &mut SerializationState<'py>,
 ) -> Result<S::Ok, S::Error> {
+    let ob_type = check_pydantic_serializable(ob_type, value);
     let extra_serialize_unknown = state.extra.serialize_unknown;
     let mut guard = match state.recursion_guard(value, INFER_DEF_REF_ID) {
         Ok(v) => v,
@@ -651,6 +653,16 @@ pub(crate) fn infer_json_key_known<'a, 'py>(
                 Err(unknown_type_error(key))
             }
         }
+    }
+}
+
+/// Some objects (e.g. `unittest.mock.call`) return a value for any attribute name, so they have a
+/// `__pydantic_serializer__` attribute which is not a `SchemaSerializer`. Treat those as unknown types
+/// so that `fallback` (or `serialize_unknown`) applies, rather than raising a `TypeError`.
+fn check_pydantic_serializable(ob_type: ObType, value: &Bound<'_, PyAny>) -> ObType {
+    match ob_type {
+        ObType::PydanticSerializable if get_pydantic_serializer(value).is_err() => ObType::Unknown,
+        _ => ob_type,
     }
 }
 
